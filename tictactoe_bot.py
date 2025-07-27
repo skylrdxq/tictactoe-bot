@@ -1,4 +1,3 @@
-import os
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,27 +18,28 @@ def build_board(board):
     buttons = []
     for i in range(0, 9, 3):
         row = [
-            InlineKeyboardButton(text=board[i + j] if board[i + j] != " " else str(i + j),
-                                 callback_data=str(i + j))
+            InlineKeyboardButton(
+                text=board[i + j] if board[i + j] != " " else str(i + j),
+                callback_data=str(i + j)
+            )
             for j in range(3)
         ]
         buttons.append(row)
     return InlineKeyboardMarkup(buttons)
 
 def check_winner(board, symbol):
-    win_combos = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],  # строки
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],  # столбцы
-        [0, 4, 8], [2, 4, 6]              # диагонали
+    combos = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6],
     ]
-    return any(all(board[i] == symbol for i in combo) for combo in win_combos)
+    return any(all(board[i] == symbol for i in combo) for combo in combos)
 
 def board_full(board):
     return all(cell != " " for cell in board)
 
 def bot_move_easy(board):
-    empty = [i for i, cell in enumerate(board) if cell == " "]
-    return random.choice(empty)
+    return random.choice([i for i, cell in enumerate(board) if cell == " "])
 
 def bot_move_hard(board):
     def minimax(board, is_maximizing):
@@ -88,7 +88,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Сложный", callback_data="set_difficulty_hard"),
         ]
     ]
-    await update.message.reply_text("Выбери уровень сложности:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Выберите уровень сложности:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def set_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
