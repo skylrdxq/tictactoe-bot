@@ -84,14 +84,22 @@ def bot_move_hard(board):
                 best_move = i
     return best_move
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton("Лёгкий 🤖", callback_data="set_difficulty_easy"),
-            InlineKeyboardButton("Сложный 🧠", callback_data="set_difficulty_hard"),
-        ]
-    ]
-    await update.message.reply_text("Выбери уровень сложности:", reply_markup=InlineKeyboardMarkup(keyboard))
+async def set_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    difficulty = query.data.split("_")[-1]
+    user_id = query.from_user.id
+
+    games[user_id] = {
+        "board": new_board(),
+        "difficulty": difficulty,
+        "turn": "X"
+    }
+
+    await query.edit_message_text(
+        f"Вы играете против бота ({'лёгкий' if difficulty == 'easy' else 'сложный'} уровень).\nВы ходите первым (❌).",
+        reply_markup=build_board(games[user_id]["board"])
+    )
 
 async def set_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
