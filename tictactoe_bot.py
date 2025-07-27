@@ -1,4 +1,10 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+import random
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -6,151 +12,165 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Хранилище всех игр и настроек
-player_settings = {}  # user_id -> {"board": [...], "difficulty": "easy"/"hard"}
+# Словарь для хранения состояния игр
+games = {}
+
+# Получение токена из переменной окружения
+TOKEN = os.getenv("BOT_TOKEN")
 
 # Создание пустого поля
 def new_board():
-    return [" " for _ in range(9)]
+    return [" "] * 9
 
-# Проверка победителя
-def check_winner(board):
-    wins = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],
-        [0, 4, 8], [2, 4, 6]
-    ]
-    for a, b, c in wins:
-        if board[a] == board[b] == board[c] and board[a] != " ":
-            return board[a]
-    if " " not in board:
-        return "Ничья"
-    return None
-
-# Генерация кнопок
-def get_keyboard(board):
+# Отображение поля кнопками
+def build_board(board):
     keyboard = []
     for i in range(0, 9, 3):
-        row = []
-        for j in range(3):
-            idx = i + j
-            text = board[idx] if board[idx] != " " else "⬜"
-            row.append(InlineKeyboardButton(text, callback_data=str(idx)))
+        row = [
+            InlineKeyboardButton(board[j] if board[j] != " " else "⬜", callback_data=str(j))
+            for j in range(i, i + 3)
+        ]
         keyboard.append(row)
     return InlineKeyboardMarkup(keyboard)
 
-# Умный бот
-def bot_move_smart(board):
+# Проверка победы
+def check_win(board, player):
     wins = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],
-        [0, 4, 8], [2, 4, 6]
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],  # ряды
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],  # колонки
+        [0, 4, 8], [2, 4, 6]              # диагонали
     ]
+    return any(all(board[i] == player for i in line) for line in wins)
 
-    # 1. Победить, если есть возможность
-    for a, b, c in wins:
-        line = [board[a], board[b], board[c]]
-        if line.count("⭕") == 2 and line.count(" ") == 1:
-            board[[a, b, c][line.index(" ")]] = "⭕"
-            return
+# Проверка ничьи
+def is_draw(board):
+    return all(cell != " " for cell in board)
 
-    # 2. Блокировать игрока
-    for a, b, c in wins:
-        line = [board[a], board[b], board[c]]
-        if line.count("❌") == 2 and line.count(" ") == 1:
-            board[[a, b, c][line.index(" ")]] = "⭕"
-            return
+# Ход бота — лёгкий уровень
+def bot_move_easy(board):
+    empty = [i for i, cell in enumerate(board) if cell == " "]
+    return random.choice(empty)
 
-    # 3. Центр
-    if board[4] == " ":
-        board[4] = "⭕"
-        return
+# Ход бота — сложный уровень (минимакс)
+def minimax(board, is_maximizing):
+    winner = None
+    if check_win(board, "O"):
+        return 1
+    elif check_win(board, "X"):
+        return -1
+    elif is_draw(board):
+        return 0
 
-    # 4. Углы
-    for i in [0, 2, 6, 8]:
-        if board[i] == " ":
-            board[i] = "⭕"
-            return
+    if is_maximizing:
+        best_score = -float("inf")
+        for i in range(9):
+            if board[i] == " ":
+                board[i] = "O"
+                score = minimax(board, False)
+                board[i] = " "
+                best_score = max(score, best_score)
+        return best_score
+    else:
+        best_score = float("inf")
+        for i in range(9):
+            if board[i] == " ":
+                board[i] = "X"
+                score = minimax(board, True)
+                board[i] = " "
+                best_score = min(score, best_score)
+        return best_score
 
-    # 5. Любая свободная
+def bot_move_hard(board):
+    best_score = -float("inf")
+    best_move = None
     for i in range(9):
         if board[i] == " ":
-            board[i] = "⭕"
-            return
+            board[i] = "O"
+            score = minimax(board, False)
+            board[i] = " "
+            if score > best_score:
+                best_score = score
+                best_move = i
+    return best_move
 
-# Старт — выбор сложности
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("😎 Легко", callback_data="set_difficulty_easy")],
-        [InlineKeyboardButton("🧠 Сложно", callback_data="set_difficulty_hard")]
+        [
+            InlineKeyboardButton("Лёгкий 🤖", callback_data="set_difficulty_easy"),
+            InlineKeyboardButton("Сложный 🧠", callback_data="set_difficulty_hard"),
+        ]
     ]
     await update.message.reply_text("Выбери уровень сложности:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Установка сложности и начало игры
+# Обработка выбора сложности
 async def set_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    difficulty = query.data.split("_")[-1]
     user_id = query.from_user.id
 
-    difficulty = "easy" if "easy" in query.data else "hard"
-    player_settings[user_id] = {
+    games[user_id] = {
         "board": new_board(),
-        "difficulty": difficulty
+        "difficulty": difficulty,
+        "turn": "X"
     }
 
     await query.edit_message_text(
-        f"Игра началась! Ты выбрал уровень: {'Легко' if difficulty == 'easy' else 'Сложно'}\nТы играешь за ❌",
-        reply_markup=get_keyboard(player_settings[user_id]["board"])
+        f"Вы играете против бота ({'лёгкий' if difficulty == 'easy' else 'сложный'} уровень).\nВы ходите первым (❌).",
+        reply_markup=build_board(games[user_id]["board"])
     )
 
-# Обработка нажатий на клетки
+# Обработка кликов по кнопкам поля
 async def handle_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
+    await query.answer()
 
-    game = player_settings.get(user_id)
-    if not game:
-        await query.edit_message_text("Сначала начни игру командой /start.")
+    if user_id not in games:
+        await query.edit_message_text("Сначала начните игру: /start")
         return
 
+    game = games[user_id]
     board = game["board"]
-    difficulty = game["difficulty"]
-    idx = int(query.data)
+    pos = int(query.data)
 
-    if board[idx] != " ":
+    if board[pos] != " ":
+        return  # игнор хода по занятой клетке
+
+    board[pos] = "X"
+
+    if check_win(board, "X"):
+        await query.edit_message_text("Вы победили! 🎉", reply_markup=build_board(board))
+        del games[user_id]
         return
-
-    board[idx] = "❌"
-    winner = check_winner(board)
-    if winner:
-        await query.edit_message_text(f"Победитель: {winner}", reply_markup=None)
-        player_settings.pop(user_id)
+    elif is_draw(board):
+        await query.edit_message_text("Ничья 🤝", reply_markup=build_board(board))
+        del games[user_id]
         return
 
     # Ход бота
-    if difficulty == "easy":
-        for i in range(9):
-            if board[i] == " ":
-                board[i] = "⭕"
-                break
+    bot_pos = (
+        bot_move_easy(board) if game["difficulty"] == "easy"
+        else bot_move_hard(board)
+    )
+    board[bot_pos] = "O"
+
+    if check_win(board, "O"):
+        await query.edit_message_text("Бот победил! 🤖", reply_markup=build_board(board))
+        del games[user_id]
+    elif is_draw(board):
+        await query.edit_message_text("Ничья 🤝", reply_markup=build_board(board))
+        del games[user_id]
     else:
-        bot_move_smart(board)
+        await query.edit_message_text("Ваш ход:", reply_markup=build_board(board))
 
-    winner = check_winner(board)
-    if winner:
-        await query.edit_message_text(f"Победитель: {winner}", reply_markup=None)
-        player_settings.pop(user_id)
-    else:
-        await query.edit_message_reply_markup(reply_markup=get_keyboard(board))
-
-# Точка входа
-if __name__ == '__main__':
-    TOKEN = "8307156776:AAEeRSzbzR2xuLQGAsWs46o45OG50nEKyfo"  # 👈 Вставь сюда токен от @BotFather
-
+# Запуск бота
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(set_difficulty, pattern="set_difficulty_.*"))
+    app.add_handler(CallbackQueryHandler(set_difficulty, pattern="^set_difficulty_"))
     app.add_handler(CallbackQueryHandler(handle_click, pattern="^[0-8]$"))
 
     print("Бот запущен...")
