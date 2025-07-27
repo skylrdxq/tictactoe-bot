@@ -1,10 +1,15 @@
+import os
 import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
+    ContextTypes
 )
 
 TOKEN = "8307156776:AAEeRSzbzR2xuLQGAsWs46o45OG50nEKyfo"
@@ -17,76 +22,50 @@ def new_board():
 def build_board(board):
     buttons = []
     for i in range(0, 9, 3):
-        row = [
-            InlineKeyboardButton(
-                text=board[i + j] if board[i + j] != " " else str(i + j),
-                callback_data=str(i + j)
-            )
-            for j in range(3)
-        ]
+        row = []
+        for j in range(3):
+            symbol = board[i + j]
+            label = symbol if symbol != " " else "⬜"
+            row.append(InlineKeyboardButton(label, callback_data=str(i + j)))
         buttons.append(row)
     return InlineKeyboardMarkup(buttons)
 
 def check_winner(board, symbol):
-    combos = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],
-        [0, 4, 8], [2, 4, 6],
+    wins = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
     ]
-    return any(all(board[i] == symbol for i in combo) for combo in combos)
+    return any(all(board[i] == symbol for i in line) for line in wins)
 
 def board_full(board):
     return all(cell != " " for cell in board)
 
 def bot_move_easy(board):
-    return random.choice([i for i, cell in enumerate(board) if cell == " "])
+    empty = [i for i, cell in enumerate(board) if cell == " "]
+    return random.choice(empty)
 
 def bot_move_hard(board):
-    def minimax(board, is_maximizing):
-        if check_winner(board, "O"):
-            return 1
-        if check_winner(board, "X"):
-            return -1
-        if board_full(board):
-            return 0
-
-        if is_maximizing:
-            best_score = -float("inf")
-            for i in range(9):
-                if board[i] == " ":
-                    board[i] = "O"
-                    score = minimax(board, False)
-                    board[i] = " "
-                    best_score = max(score, best_score)
-            return best_score
-        else:
-            best_score = float("inf")
-            for i in range(9):
-                if board[i] == " ":
-                    board[i] = "X"
-                    score = minimax(board, True)
-                    board[i] = " "
-                    best_score = min(score, best_score)
-            return best_score
-
-    best_move = None
-    best_score = -float("inf")
     for i in range(9):
         if board[i] == " ":
             board[i] = "O"
-            score = minimax(board, False)
+            if check_winner(board, "O"):
+                board[i] = " "
+                return i
             board[i] = " "
-            if score > best_score:
-                best_score = score
-                best_move = i
-    return best_move
+    for i in range(9):
+        if board[i] == " ":
+            board[i] = "X"
+            if check_winner(board, "X"):
+                board[i] = " "
+                return i
+            board[i] = " "
+    return bot_move_easy(board)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [
-            InlineKeyboardButton("Лёгкий", callback_data="set_difficulty_easy"),
-            InlineKeyboardButton("Сложный", callback_data="set_difficulty_hard"),
-        ]
+        [InlineKeyboardButton("Лёгкий", callback_data="difficulty_easy")],
+        [InlineKeyboardButton("Сложный", callback_data="difficulty_hard")]
     ]
     await update.message.reply_text("Выберите уровень сложности:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -107,56 +86,54 @@ async def set_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=build_board(games[user_id]["board"])
     )
 
-async def handle_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     user_id = query.from_user.id
+    game = games.get(user_id)
 
-    if user_id not in games:
-        await query.answer("Сначала напишите /start.")
+    if not game:
+        await query.edit_message_text("Игра не найдена. Напишите /start чтобы начать.")
         return
 
-    game = games[user_id]
-    board = game["board"]
-    difficulty = game["difficulty"]
     index = int(query.data)
+    board = game["board"]
 
     if board[index] != " ":
-        await query.answer("Клетка уже занята!")
         return
 
     board[index] = "X"
-
     if check_winner(board, "X"):
-        await query.edit_message_text("Вы победили! 🎉")
-        del games[user_id]
+        await query.edit_message_text("Вы победили! 🎉", reply_markup=build_board(board))
+        games.pop(user_id)
         return
 
     if board_full(board):
-        await query.edit_message_text("Ничья! 🤝")
-        del games[user_id]
+        await query.edit_message_text("Ничья 🤝", reply_markup=build_board(board))
+        games.pop(user_id)
         return
 
-    bot_index = bot_move_easy(board) if difficulty == "easy" else bot_move_hard(board)
-    board[bot_index] = "O"
+    if game["difficulty"] == "easy":
+        move = bot_move_easy(board)
+    else:
+        move = bot_move_hard(board)
 
+    board[move] = "O"
     if check_winner(board, "O"):
-        await query.edit_message_text("Бот победил! 🤖")
-        del games[user_id]
+        await query.edit_message_text("Бот победил 😢", reply_markup=build_board(board))
+        games.pop(user_id)
         return
 
     if board_full(board):
-        await query.edit_message_text("Ничья! 🤝")
-        del games[user_id]
+        await query.edit_message_text("Ничья 🤝", reply_markup=build_board(board))
+        games.pop(user_id)
         return
 
-    await query.edit_message_text("Ваш ход (❌):", reply_markup=build_board(board))
+    await query.edit_message_reply_markup(reply_markup=build_board(board))
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(set_difficulty, pattern="set_difficulty_.*"))
-    app.add_handler(CallbackQueryHandler(handle_click, pattern="^[0-8]$"))
-
-    print("Бот запущен...")
+    app.add_handler(CallbackQueryHandler(set_difficulty, pattern="^difficulty_"))
+    app.add_handler(CallbackQueryHandler(handle_move, pattern="^[0-8]$"))
     app.run_polling()
